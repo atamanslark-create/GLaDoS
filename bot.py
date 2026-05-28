@@ -10,8 +10,52 @@ GLaDoS — точка входа.
 """
 
 import asyncio
+import hashlib
 import logging
+import subprocess
+import sys
+from pathlib import Path
 from datetime import date
+
+
+def _ensure_dependencies() -> None:
+    """Проверяет и устанавливает зависимости при запуске.
+
+    Хэш requirements.txt сохраняется в data/.req_hash.
+    Pip запускается только при изменении файла или отсутствии пакетов.
+    """
+    req_file = Path(__file__).parent / "requirements.txt"
+    if not req_file.exists():
+        return
+
+    hash_file = Path(__file__).parent / "data" / ".req_hash"
+    hash_file.parent.mkdir(parents=True, exist_ok=True)
+
+    current_hash = hashlib.md5(req_file.read_bytes()).hexdigest()
+    saved_hash = hash_file.read_text().strip() if hash_file.exists() else ""
+
+    # Быстрая проверка: если хэш не изменился — пропускаем pip
+    if current_hash == saved_hash:
+        return
+
+    print("🔍 Обнаружены изменения в requirements.txt — устанавливаю зависимости...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "-r", str(req_file)],
+            timeout=180,
+            check=False,
+        )
+        if result.returncode == 0:
+            hash_file.write_text(current_hash)
+            print("✅ Зависимости установлены и актуальны\n")
+        else:
+            print("⚠️  pip завершился с ошибкой — бот продолжает запуск\n")
+    except subprocess.TimeoutExpired:
+        print("⚠️  Установка зависимостей превысила таймаут (180 с) — продолжаю\n")
+    except FileNotFoundError:
+        print("⚠️  pip не найден — зависимости не проверены\n")
+    except Exception as exc:
+        print(f"⚠️  Ошибка при установке зависимостей: {exc}\n")
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -147,6 +191,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    _ensure_dependencies()
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
